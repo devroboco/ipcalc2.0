@@ -15,7 +15,7 @@ type SelectFieldProps = {
 };
 
 const baseSelect =
-  "w-full h-11 rounded-sm border border-gray-300 bg-white px-4 pr-10" +
+  "cursor-pointer w-full h-11 rounded-sm border border-gray-300 bg-white px-4 pr-10" +
   "font-roboto text-[15px] text-[#1E1E1E] outline-none transition " +
   "focus:border-blue-500 focus:ring-2 focus:ring-blue-200 " +
   "disabled:bg-gray-200 disabled:text-gray-600 disabled:cursor-not-allowed" +

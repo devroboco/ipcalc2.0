@@ -1,16 +1,15 @@
-// src/components/FormSection.tsx
 import { useMemo, useState } from "react";
 import InputField from "./InputField";
 import SelectField, { type Option } from "./SelectField";
 import FormActions from "./FormActions";
 import SubnetResultTable from "./SubnetResult";
 import {
-  ipToInt,
   maskToPrefix,
-  normalizeNetwork,
   subnetByCount,
   vlsmByHosts,
   type SubnetResult,
+  prepareBaseNetwork,
+  hybridByCountAndHosts,
 } from "../utils/ip";
 
 const subnetOptions: Option[] = [
@@ -21,12 +20,10 @@ const subnetOptions: Option[] = [
 ];
 
 export default function FormSection() {
-  // topo
   const [network, setNetwork] = useState("");
   const [mask, setMask] = useState("");
   const [subnetCount, setSubnetCount] = useState("1");
 
-  // hosts (sub-redes)
   const [hosts1, setHosts1] = useState("");
   const [hosts2, setHosts2] = useState("0");
   const [hosts3, setHosts3] = useState("0");
@@ -35,17 +32,14 @@ export default function FormSection() {
   const [rows, setRows] = useState<SubnetResult[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // CIDR acompanha máscara
   const cidr = useMemo(() => maskToPrefix(mask), [mask]);
   const cidrText = cidr == null ? "" : `/${cidr}`;
 
-  // habilitação de sub-redes conforme select 1..4
   const n = Number(subnetCount) || 1;
   const h2Disabled = n < 2;
   const h3Disabled = n < 3;
   const h4Disabled = n < 4;
 
-  // ao mudar quantidade, zera os inputs desabilitados
   function handleSubnetCountChange(val: string) {
     const clamped = ["1", "2", "3", "4"].includes(val) ? val : "1";
     setSubnetCount(clamped);
@@ -72,17 +66,6 @@ export default function FormSection() {
     setError(null);
     setRows([]);
 
-    // valida entradas
-    const ipInt = ipToInt(network);
-    if (ipInt == null)
-      return setError("Endereço de rede inválido. Ex.: 192.168.0.0");
-    if (cidr == null) return setError("Máscara de rede inválida.");
-
-    // normaliza rede base
-    const base = normalizeNetwork(network, cidr);
-    if (!base) return setError("Não foi possível normalizar a rede base.");
-
-    // coleta hosts habilitados
     const enabledHosts = [
       Number(hosts1) || 0,
       h2Disabled ? 0 : Number(hosts2) || 0,
@@ -90,28 +73,47 @@ export default function FormSection() {
       h4Disabled ? 0 : Number(hosts4) || 0,
     ];
     const anyHosts = enabledHosts.some((h) => h > 0);
+    const count = Number(subnetCount) || 1;
+    const k = enabledHosts.filter((h) => h > 0).length;
 
     try {
+      const { base, prefix } = prepareBaseNetwork(network, mask, {
+        allowPrivate: true,
+        allowLoopback: false,
+        allowLinkLocal: false,
+        allowMulticast: false,
+        allowReserved: false,
+        allowCGNAT: false,
+      });
+
       let result: SubnetResult[] = [];
-      if (anyHosts) {
-        // VLSM
-        result = vlsmByHosts({
+      if (!anyHosts) {
+        // Caso 1: só quantidade (padrão)
+        result = subnetByCount({ network: base, prefix, subnets: count });
+      } else if (k < count) {
+        // Caso 2: HÍBRIDO (tem hosts para algumas, e N > K)
+        result = hybridByCountAndHosts({
           network: base,
-          prefix: cidr,
+          prefix,
+          subnetCount: count,
           hosts: enabledHosts,
+          // policy é opcional; se quiser permitir /31/32, ajuste aqui
+          policy: { requireUsableHosts: true },
         });
       } else {
-        // Subnetting por quantidade (1..4)
-        const count = Number(subnetCount) || 1;
-        result = subnetByCount({ network: base, prefix: cidr, subnets: count });
+        // Caso 3: VLSM puro (K == N)
+        result = vlsmByHosts({
+          network: base,
+          prefix,
+          hosts: enabledHosts,
+          policy: { requireUsableHosts: true },
+        });
       }
       setRows(result);
     } catch (err: unknown) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError("Erro ao calcular sub-redes.");
-      }
+      setError(
+        err instanceof Error ? err.message : "Erro ao calcular sub-redes."
+      );
     }
   }
 
@@ -121,7 +123,6 @@ export default function FormSection() {
         onSubmit={handleSubmit}
         className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6'
       >
-        {/* topo */}
         <InputField
           id='network'
           label='Endereço de rede'
@@ -140,7 +141,6 @@ export default function FormSection() {
           className='lg:col-span-2'
         />
 
-        {/* CIDR espelhado da máscara (desabilitado) */}
         <InputField
           id='cidr'
           label='CIDR'
@@ -171,36 +171,40 @@ export default function FormSection() {
             <InputField
               id='hosts1'
               label='Sub-rede 1'
-              type='number'
               placeholder='Ex.: 60'
               value={hosts1}
               onChange={setHosts1}
+              numeric
+              min={0}
               className='w-full sm:w-36 md:w-40'
             />
             <InputField
               id='hosts2'
               label='Sub-rede 2'
-              type='number'
               value={hosts2}
               onChange={setHosts2}
+              numeric
+              min={0}
               disabled={h2Disabled}
               className='w-full sm:w-28 md:w-32'
             />
             <InputField
               id='hosts3'
               label='Sub-rede 3'
-              type='number'
               value={hosts3}
               onChange={setHosts3}
+              numeric
+              min={0}
               disabled={h3Disabled}
               className='w-full sm:w-28 md:w-32'
             />
             <InputField
               id='hosts4'
               label='Sub-rede 4'
-              type='number'
               value={hosts4}
               onChange={setHosts4}
+              numeric
+              min={0}
               disabled={h4Disabled}
               className='w-full sm:w-28 md:w-32'
             />
