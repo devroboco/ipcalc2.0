@@ -149,13 +149,15 @@ export function subnetByCount(params: {
 export function vlsmByHosts(params: {
   network: IPv4;
   prefix: number;
-  hosts: number[];
+  hosts: number[]; // Lista de hosts para cada sub-rede
   policy?: CalcPolicy;
 }): SubnetResult[] {
   const { network, prefix, policy } = params;
-  const reqs = [...params.hosts].filter((n) => n > 0).sort((a, b) => b - a);
+  const reqs = [...params.hosts].filter((n) => n > 0).sort((a, b) => b - a);  // Filtra e ordena as sub-redes pela quantidade de hosts
 
-  // rede base sem hosts utilizáveis
+  checkTotalHostsExceed(prefix, reqs);
+
+  // Verificação de hosts válidos na rede base
   if ((policy?.requireUsableHosts ?? true) && usableHosts(prefix) <= 0) {
     throw new Error("A rede base não possui hosts utilizáveis (/31 ou /32).");
   }
@@ -163,13 +165,19 @@ export function vlsmByHosts(params: {
   const netInt = ipToInt(network);
   if (netInt == null) throw new Error("Rede inválida");
 
-  const totalSpace = blockSize(prefix);
+  const totalSpace = blockSize(prefix);  // Total de endereços válidos da rede base
   let cursor = netInt >>> 0;
   const results: SubnetResult[] = [];
 
+  // Verificação do número total de hosts válidos solicitados
+  const totalHostsRequested = reqs.reduce((acc, hosts) => acc + hosts + 2, 0); // Hosts + rede + broadcast
+  if (totalHostsRequested > totalSpace) {
+    throw new Error("A quantidade total de hosts solicitados excede a capacidade da rede base");
+  }
+
   reqs.forEach((hosts, idx) => {
-    let p = requiredPrefixForHosts(hosts);
-    if (p < prefix) p = prefix; // não pode menor que o prefixo base
+    let p = requiredPrefixForHosts(hosts);  // Calcula o prefixo necessário para a quantidade de hosts
+    if (p < prefix) p = prefix;  // Não pode ser menor que o prefixo base
 
     if ((policy?.requireUsableHosts ?? true) && usableHosts(p) <= 0) {
       throw new Error(
@@ -178,14 +186,16 @@ export function vlsmByHosts(params: {
     }
 
     const size = blockSize(p);
-    // alinha ao boundary do bloco
+    // Alinha o cursor corretamente, garantindo que ele avance para o próximo espaço disponível
     const aligned = (cursor + size - 1) & ~(size - 1);
+
+    // Verifica se a sub-rede gerada ultrapassa o total de espaço disponível
     if (aligned - netInt + size > totalSpace) {
       throw new Error("As sub-redes solicitadas (VLSM) não cabem na rede base");
     }
 
     results.push(makeSubnet(aligned >>> 0, p, idx + 1));
-    cursor = (aligned + size) >>> 0;
+    cursor = (aligned + size) >>> 0;  // Avança o cursor para o próximo bloco, considerando o tamanho total
   });
 
   return results;
@@ -474,6 +484,14 @@ export function validateMask(maskStr: string): {
   }
 
   return { ok: true, prefix: p };
+}
+
+export function checkTotalHostsExceed(networkPrefix: number, requestedHosts: number[]): void {
+  const totalSpace = blockSize(networkPrefix);
+  const totalRequestedSpace = requestedHosts.reduce((acc, hosts) => acc + blockSize(requiredPrefixForHosts(hosts)), 0);
+  if (totalRequestedSpace > totalSpace) {
+    throw new Error("A quantidade total de hosts solicitados excede a capacidade da rede base.");
+  }
 }
 
 // =======================
